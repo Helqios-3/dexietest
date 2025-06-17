@@ -1,0 +1,94 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>IndexedDB Dexie Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/dexie@3.2.3/dist/dexie.min.js"></script>
+</head>
+<body>
+  <h1>Dexie Storage Transaction Test</h1>
+  <button onclick="runTest('old')">Run Old Version Test</button>
+  <button onclick="runTest('new')">Run New Version Test</button>
+  <div id="result"></div>
+
+  <script>
+    class OldStorage extends Dexie {
+      constructor() {
+        super('OldDB');
+        this.version(1).stores({ syncs: '++id, name, value, expirationInMilliseconds' });
+        this.syncs = this.table('syncs');
+      }
+
+      async saveKey(name, value, expirationInDays) {
+        const exp = Date.now() + expirationInDays * 24 * 60 * 60 * 1000;
+        try {
+          await this.syncs.where('name').equals(name).delete();
+          await this.syncs.add({ name, value, expirationInMilliseconds: exp });
+        } catch {}
+      }
+
+      async getKey(name) {
+        try {
+          const now = Date.now();
+          const item = await this.syncs.where('name').equals(name).and(i => i.expirationInMilliseconds > now).first();
+          return item?.value;
+        } catch { return undefined; }
+      }
+
+      async deleteKey(name) {
+        try {
+          await this.syncs.where('name').equals(name).delete();
+        } catch {}
+      }
+    }
+
+    class NewStorage extends Dexie {
+      constructor() {
+        super('NewDB');
+        this.version(1).stores({ syncs: '++id, name, value, expirationInMilliseconds' });
+        this.syncs = this.table('syncs');
+      }
+
+      async saveKey(name, value, expirationInDays) {
+        const exp = Date.now() + expirationInDays * 24 * 60 * 60 * 1000;
+        try {
+          await this.transaction('rw', this.syncs, async () => {
+            await this.syncs.where('name').equals(name).delete();
+            await this.syncs.add({ name, value, expirationInMilliseconds: exp });
+          });
+        } catch {}
+      }
+
+      async getKey(name) {
+        try {
+          const now = Date.now();
+          const item = await this.syncs.where('name').equals(name).and(i => i.expirationInMilliseconds > now).first();
+          return item?.value;
+        } catch { return undefined; }
+      }
+
+      async deleteKey(name) {
+        try {
+          await this.syncs.where('name').equals(name).delete();
+        } catch {}
+      }
+    }
+
+    async function runTest(version) {
+      const storage = version === 'old' ? new OldStorage() : new NewStorage();
+      let failures = 0;
+      for (let i = 0; i < 100; i++) {
+        try {
+          const key = `k${i}`;
+          await storage.saveKey(key, 'value', 1);
+          await storage.getKey(key);
+          await storage.deleteKey(key);
+        } catch (e) {
+          failures++;
+        }
+      }
+      document.getElementById('result').textContent = `${version} version: ${failures} failures out of 100`;
+    }
+  </script>
+</body>
+</html>
